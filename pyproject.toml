@@ -22,7 +22,7 @@ include = ["CHANGELOG.md"]
 python = ">=3.9, <3.12" # >=3.9 because of amazon-braket, <3.12 because of classiq
 classiq = "^0.37.0"
 qiskit = "^0.46.0"
-qiskit-algorithms = "^0.2.1"
+qiskit-algorithms = ">=0.2.1,<0.4.0"
 matplotlib = "^3.8.2" # this version could be lowered to 3.5.0 or even further back
 numpy = ">=1.23.0"
 trackhhl = {git = "https://github.com/dmark04/TrackHHL"}
