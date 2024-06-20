@@ -1,6 +1,7 @@
 """Compare the Classiq and Qiskit implementations on different use-cases and plot the
 results."""
 import csv
+import os
 from datetime import datetime
 from typing import Any
 from typing import List
@@ -165,6 +166,7 @@ def compare_qls_and_plot(
     )
 
     plt.tight_layout()
+    os.makedirs("plots", exist_ok=True)
     plt.savefig(f"plots/{filename}.png", dpi=300)
     plt.show()
 

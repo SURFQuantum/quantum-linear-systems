@@ -17,6 +17,7 @@ from classiq.builtin_functions import AmplitudeLoading
 from classiq.builtin_functions import Exponentiation
 from classiq.builtin_functions import PhaseEstimation
 from classiq.builtin_functions import StatePreparation
+from classiq.builtin_functions.exponentiation import ExponentiationOptimization
 from classiq.builtin_functions.exponentiation import PauliOperator
 from classiq.execution import ClassiqBackendPreferences
 from classiq.execution import ExecutionPreferences
@@ -149,7 +150,11 @@ def state_preparation(vector_b: np.ndarray, sp_upper: float) -> StatePreparation
 
 
 def quantum_phase_estimation(
-    paulis: List[np.matrix], qpe_register_size: int
+    paulis: List[np.matrix],
+    qpe_register_size: int,
+    scaling: float,
+    max_error: float,
+    neg_vals: bool = True,
 ) -> PhaseEstimation:
     """Perform Quantum Phase Estimation (QPE) with the specified precision.
 
@@ -163,16 +168,17 @@ def quantum_phase_estimation(
     exp_params = Exponentiation(
         pauli_operator=PauliOperator(pauli_list=paulis),
         evolution_coefficient=-2 * np.pi,
+        # constraints=ExponentiationConstraints(max_error=max_error),
+        optimization=ExponentiationOptimization.MINIMIZE_DEPTH,
     )
-
     return PhaseEstimation(
         size=qpe_register_size,
         unitary_params=exp_params,
         exponentiation_specification=ExponentiationSpecification(
             scaling=ExponentiationScaling(
-                max_depth=150,
+                max_depth=250,
                 # todo: why not precision
-                max_depth_scaling_factor=2,
+                max_depth_scaling_factor=1 + scaling,
             )
         ),
     )
@@ -245,6 +251,12 @@ def classiq_hhl_implementation(
     # verifying that the matrix is symmetric and hs eigenvalues in [0,1)
     # verify_matrix_sym_and_pos_ev(mat=matrix_a)
 
+    epsilon = 1e-2
+    epsilon_s = epsilon / 3  # state preparation
+    # epsilon_r = epsilon / 3  # conditioned rotation
+    epsilon_a = epsilon / 6  # hamiltonian simulation
+    # Note: value of sp_upper: qiskit hhl.py line 101: epsilon=1e-2, line 120 state prep.: epsilon_s = epsilon / 3
+
     solution_register_size = int(np.log2(len(vector_b)))
     if qpe_register_size is None:
         # calculate size of qpe_register from matrix
@@ -260,17 +272,25 @@ def classiq_hhl_implementation(
     model_hhl = Model()
     # Step 1: state preparation
     sp_out = model_hhl.StatePreparation(
-        params=state_preparation(vector_b=vector_b, sp_upper=1e-2 / 3)
+        params=state_preparation(vector_b=vector_b, sp_upper=epsilon_s)
     )
-    # Note: value of sp_upper: qiskit hhl.py line 101: epsilon=1e-2, line 120 state prep.: epsilon_s = epsilon / 3
 
     # Step 2 : Quantum Phase Estimation
+    # lambda_max = max(np.abs(np.linalg.eigvals(matrix_a)))
+    lambda_min = min(np.abs(np.linalg.eigvals(matrix_a)))
+    exponentiation_scaling = lambda_min
+    exponentiation_scaling = np.sqrt(2)
+    print("classiq scaling is now", exponentiation_scaling)
     qpe = quantum_phase_estimation(
-        paulis=lcu_naive(matrix_a), qpe_register_size=qpe_register_size
-    )
+        paulis=lcu_naive(matrix_a),
+        qpe_register_size=qpe_register_size,
+        scaling=exponentiation_scaling,
+        max_error=epsilon_a,
+    )  # Todo: test if this explodes circuit depth
     qpe_out = model_hhl.PhaseEstimation(params=qpe, in_wires={"IN": sp_out["OUT"]})
 
-    # Step 3 : Eigenvalue Inversion
+    # Step 3 : Eigenvalue Inversion / Conditioned Rotation
+    # Note: here qiskit seems to implement ExactReciprocal instead?! also investigate what scaling (delta) it uses
     w_min = (
         1 / 2**qpe_register_size
     )  # for qpe register of size m, this is the minimal value which can be encoded
@@ -313,6 +333,9 @@ def classiq_hhl_implementation(
     # Synth circuit
     qprog_hhl = synthesize(serialized_hhl_model)
 
+    with open("hhl.qmod", "w") as f:
+        f.write(serialized_hhl_model)
+
     return qprog_hhl, matrix_a, vector_b, w_min, qpe_register_size
 
 
@@ -342,6 +365,7 @@ def solve_hhl_classiq(
 
     # extract solution vector
     smallest_eigenval = min(np.linalg.eigvals(matrix_a))
+
     quantum_solution = extract_solution(
         qprog_hhl=circuit_hhl,
         w_min=w_min,
